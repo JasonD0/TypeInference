@@ -158,9 +158,15 @@ inferExp g (If e e1 e2) = do (e', t, T)     <- inferExp g e
 -- inferExp g (Case e [Alt "Inl" [x] e1, Alt "Inr" [y] e2])
 -- inferExp g (Case e _) = typeError MalformedAlternatives
 
--- Recursive Functions
+-- Recursive Functions    --Bind Id (Maybe QType) [Id] Exp
+inferExp g (Recfun (Bind f _ [x] e)) = do alpha1     <- fresh
+                                          alpha2     <- fresh
+                                          (e', t, T) <- inferExp ((x =: alpha1)<>(f =: alpha2)<>g) e 
+                                          U          <- unify (substitute T alpha2) (Arrow (substitute T alpha1) t)
+                                          return (Recfun (Bind f _ [x] e'), substitute U (Arrow (substitute alpha1 t)), U<>T)
 
 -- Let Bindings
+inferExp g (Let e1 (Bind e1 _ [x] e2)) = 
 
 
 
