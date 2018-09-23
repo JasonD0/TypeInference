@@ -99,10 +99,65 @@ inferProgram :: Gamma -> Program -> TC (Program, Type, Subst)
 inferProgram env bs = error "implement me! don't forget to run the result substitution on the"
                             "entire expression using allTypes from Syntax.hs"
 
+{-
+data Exp              data Type = Arrow Type Type
+    = Var Id                    | Prod Type Type
+    | Prim Op                   | Sum Type Type
+    | Con Id                    | Base BaseType
+    | Num Integer               | TypeVar Id
+    | App Exp Exp
+    | If Exp Exp Exp
+    | Let [Bind] Exp
+    | Recfun Bind
+    | Letrec [Bind] Exp
+    | Case Exp [Alt]
+
+
+data TypeError = TypeMismatch Type Type
+               | OccursCheckFailed Id Type
+               | NoSuchVariable Id
+               | NoSuchConstructor Id
+               | MalformedAlternatives
+               | ForallInRecfun
+-}
+
 inferExp :: Gamma -> Exp -> TC (Exp, Type, Subst)
-inferExp g _ = error "Implement me!"
+-- Constants and Variables
+inferExp g (Num n) = return (Num n, Base Int, emptySubst)
+inferExp g (Var x) = case E.lookup g x of 
+                        (Just v)  -> do v' <- unquantify v 
+                                        return (Var x, v', emptySubst)  
+                        (Nothing) -> typeError (NoSuchVariable x)
+
+-- Constructors and Primops
+inferExp g (Con C) = case constType C of 
+                        (Just c)  -> do c' <- unquantify c 
+                                        return (Con C, c', emptySubst)
+                        (Nothing) -> typeError (NoSuchConstructor C)
+
+inferExp g (Prim o) = do p <- unquantify (Prim o) 
+                        return (Prim o, p, emptySubst)
+
+-- Application
+inferExp g (App e1 e2) = do (e1', t1, T)    <- inferExp g e1 
+                            (e2', t2, T')   <- inferExp (substGamma T g) e2
+                            alpha           <- fresh
+                            U               <- unify (substitute T' t1) (Arrow t2 alpha)
+                            return (App e1' e2', substitute U alpha, U<>T'<>T) 
+
+-- If-Then-Else
+inferExp g (If e e1 e2) = do (e', t, T) <- inferExp g e 
+                              U         <- unify T (Base Bool)
+                              
+
+-- Case
 -- -- Note: this is the only case you need to handle for case expressions
 -- inferExp g (Case e [Alt "Inl" [x] e1, Alt "Inr" [y] e2])
 -- inferExp g (Case e _) = typeError MalformedAlternatives
+
+-- Recursive Functions
+
+-- Let Bindings
+
 
 
