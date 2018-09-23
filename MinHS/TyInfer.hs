@@ -146,9 +146,12 @@ inferExp g (App e1 e2) = do (e1', t1, T)    <- inferExp g e1
                             return (App e1' e2', substitute U alpha, U<>T'<>T) 
 
 -- If-Then-Else
-inferExp g (If e e1 e2) = do (e', t, T) <- inferExp g e 
-                              U         <- unify T (Base Bool)
-                              
+inferExp g (If e e1 e2) = do (e', t, T)     <- inferExp g e 
+                              U             <- unify T (Base Bool)
+                             (e1', t1, T')  <- inferExp (substGamma U<>T g) e1
+                             (e2', t2, T'') <- inferExp (substGamma T'<>U<>T g) e2
+                              U'            <- unify (substitute T'' t1) t2
+                              return (If e' e1' e2', substitute U' t2, U'<>U<>T''<>T'<>T) 
 
 -- Case
 -- -- Note: this is the only case you need to handle for case expressions
