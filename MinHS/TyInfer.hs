@@ -88,9 +88,44 @@ unquantify' i s (Forall x t) = do x' <- fresh
                                   unquantify' (i + 1)
                                               ((show i =: x') <> s)
                                               (substQType (x =:TypeVar (show i)) t)
-
+{-
+data Type = Arrow Type Type
+          | Prod Type Type
+          | Sum Type Type
+          | Base BaseType
+          | TypeVar Id
+-}
 unify :: Type -> Type -> TC Subst
-unify = error "implement me"
+-- both type variables
+unify (TypeVar v1) (TypeVar v2) | v1 == v2  = return emptySubst
+                                | otherwise = return (v1 =: TypeVar v2)
+
+-- both primitive types
+unify (Base b1) (Base b2) | b1 == b2  = return emptySubst
+                          | otherwise = typeError (TypeMismatch (Base b1) (Base b2))
+
+-- both product types 
+unify (Prod t11 t12) (Prod t21 t22) = do S  <- unify t11 t21
+                                         S' <- unify (substitute S t12) (substitute S t22)
+                                         return S<>S'
+
+-- both sum types 
+unify (Sum t11 t12) (Sum t21 t22) = do S  <- unify t11 t21 
+                                       S' <- unify (substitute S t12) (substitute S t22) 
+                                       return S<>S'
+
+-- both func types 
+unify (Arrow t11 t12) (Arrow t21 t22) = do S  <- unify t11 t21
+                                           S' <- unify (substitute S t12) (substitute t22)
+                                           return S<>S'
+
+-- type variable and term t 
+unify (TypeVar v) t | elem v (tv t) = typeError (OccursCheckFailed v t)
+                    | otherwise return (v =: t)
+unify t (TypeVar v) = unify v t 
+
+-- no unifier
+unify t1 t2 = typeError (TypeMismatch t1 t2)
 
 generalise :: Gamma -> Type -> QType
 generalise g t = error "implement me"
@@ -98,28 +133,6 @@ generalise g t = error "implement me"
 inferProgram :: Gamma -> Program -> TC (Program, Type, Subst)
 inferProgram env bs = error "implement me! don't forget to run the result substitution on the"
                             "entire expression using allTypes from Syntax.hs"
-
-{-
-data Exp              data Type = Arrow Type Type
-    = Var Id                    | Prod Type Type
-    | Prim Op                   | Sum Type Type
-    | Con Id                    | Base BaseType
-    | Num Integer               | TypeVar Id
-    | App Exp Exp
-    | If Exp Exp Exp
-    | Let [Bind] Exp
-    | Recfun Bind
-    | Letrec [Bind] Exp
-    | Case Exp [Alt]
-
-
-data TypeError = TypeMismatch Type Type
-               | OccursCheckFailed Id Type
-               | NoSuchVariable Id
-               | NoSuchConstructor Id
-               | MalformedAlternatives
-               | ForallInRecfun
--}
 
 inferExp :: Gamma -> Exp -> TC (Exp, Type, Subst)
 -- Constants and Variables
@@ -151,22 +164,31 @@ inferExp g (If e e1 e2) = do (e', t, T)     <- inferExp g e
                              (e1', t1, T')  <- inferExp (substGamma U<>T g) e1
                              (e2', t2, T'') <- inferExp (substGamma T'<>U<>T g) e2
                               U'            <- unify (substitute T'' t1) t2
-                              return (If e' e1' e2', substitute U' t2, U'<>U<>T''<>T'<>T) 
+                              return (If e' e1' e2', substitute U' t2, U'<>T''<>T'<>U<>T) 
 
 -- Case
 -- -- Note: this is the only case you need to handle for case expressions
--- inferExp g (Case e [Alt "Inl" [x] e1, Alt "Inr" [y] e2])
--- inferExp g (Case e _) = typeError MalformedAlternatives
+inferExp g (Case e [Alt "Inl" [x] e1, Alt "Inr" [y] e2]) = do (e', t, T)     <- inferExp g e
+                                                              alphal         <- fresh 
+                                                              alphar         <- fresh
+                                                              (e1', tl, T')  <- inferExp (substGamma T (E.add g (x, Ty alphal))) e1
+                                                              (e2', tr, T'') <- inferExp (substGamme (T'<>T) (E.add g (y, Ty alphar))) e2
+                                                              U              <- unify (substitute (T''<>T'<>T) (Sum alphal alphar)) (substitute (T''<>T') t)
+                                                              U'             <- unify (substitute (U<>T'') t1) (substitute U tr)
+                                                              return
+inferExp g (Case e _) = typeError MalformedAlternatives
 
 -- Recursive Functions    --Bind Id (Maybe QType) [Id] Exp
 inferExp g (Recfun (Bind f _ [x] e)) = do alpha1     <- fresh
                                           alpha2     <- fresh
-                                          (e', t, T) <- inferExp ((x =: alpha1)<>(f =: alpha2)<>g) e 
+                                          (e', t, T) <- inferExp (E.addAll g [(x, Ty alpha1), (f, Ty alpha2)) e 
                                           U          <- unify (substitute T alpha2) (Arrow (substitute T alpha1) t)
                                           return (Recfun (Bind f _ [x] e'), substitute U (Arrow (substitute alpha1 t)), U<>T)
 
 -- Let Bindings
-inferExp g (Let e1 (Bind e1 _ [x] e2)) = 
+inferExp g (Let (Bind e1 _ [x] e2) e1) = do (e1', t, T)   <- inferExp g e1
+                                            (e2', t', T') <- inferExp (E.add (substGamma T g) (x, generalise T<>g t)) e2
+                                            return (Let e1' e2', t', T'<>T)
 
 
 
