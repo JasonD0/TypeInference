@@ -105,25 +105,25 @@ unify (Base b1) (Base b2) | b1 == b2  = return emptySubst
                           | otherwise = typeError (TypeMismatch (Base b1) (Base b2))
 
 -- both product types 
-unify (Prod t11 t12) (Prod t21 t22) = do S  <- unify t11 t21
-                                         S' <- unify (substitute S t12) (substitute S t22)
-                                         return S<>S'
+unify (Prod t11 t12) (Prod t21 t22) = do s  <- unify t11 t21
+                                         s' <- unify (substitute s t12) (substitute s t22)
+                                         return (s<>s')
 
 -- both sum types 
-unify (Sum t11 t12) (Sum t21 t22) = do S  <- unify t11 t21 
-                                       S' <- unify (substitute S t12) (substitute S t22) 
-                                       return S<>S'
+unify (Sum t11 t12) (Sum t21 t22) = do s  <- unify t11 t21 
+                                       s' <- unify (substitute s t12) (substitute s t22) 
+                                       return (s<>s')
 
 -- both func types 
-unify (Arrow t11 t12) (Arrow t21 t22) = do S  <- unify t11 t21
-                                           S' <- unify (substitute S t12) (substitute t22)
-                                           return S<>S'
+unify (Arrow t11 t12) (Arrow t21 t22) = do s  <- unify t11 t21
+                                           s' <- unify (substitute s t12) (substitute s t22)
+                                           return (s<>s')
 
 -- type variable and term t 
 unify (TypeVar v) t | elem v (tv t) = typeError (OccursCheckFailed v t)
-                    | otherwise return (v =: t)
+                    | otherwise = return (v =: t)
 unify t (TypeVar v) | elem v (tv t) = typeError (OccursCheckFailed v t)
-                    | otherwise return (v =: t)
+                    | otherwise = return (v =: t)
 
 -- no unifier
 unify t1 t2 = typeError (TypeMismatch t1 t2)
@@ -132,13 +132,13 @@ generalise :: Gamma -> Type -> QType
 generalist g t = generalise' ((tv t) \\ (tvGamma g)) t
 generalise g t = error "implement me"
 
-generalise' :: [Id] -> QType
-generalise' [] t = Ty t;
+generalise' :: [Id] -> Type -> QType
+generalise' [] t = Ty t
 generalise' (ident:idents) t = Forall ident (generalise' idents t)
 
 inferProgram :: Gamma -> Program -> TC (Program, Type, Subst)
-inferProgram env (Bind Main types args e) = do (e', t, T) <- inferExp env e 
-                                                return ([allTypesBind (substQType T) (Bind Main (Just (generalise g t) args e'))], t, T)
+inferProgram env [(Bind main types args e)] = do  (e', t, sub) <- inferExp env e 
+                                                  return ([allTypesBind (substQType sub) (Bind main (Just (generalise env t)) args e')], t, sub)
 inferProgram env bs = error "implement me! don't forget to run the result substitution on the"
                             "entire expression using allTypes from Syntax.hs"
 
@@ -151,57 +151,57 @@ inferExp g (Var x) = case E.lookup g x of
                         (Nothing) -> typeError (NoSuchVariable x)
 
 -- Constructors and Primops
-inferExp g (Con C) = case constType C of 
+inferExp g (Con id) = case constType id of 
                         (Just c)  -> do c' <- unquantify c 
-                                        return (Con C, c', emptySubst)
-                        (Nothing) -> typeError (NoSuchConstructor C)
+                                        return (Con id, c', emptySubst)
+                        (Nothing) -> typeError (NoSuchConstructor id)
 
-inferExp g (Prim o) = do p <- unquantify (Prim o) 
-                        return (Prim o, p, emptySubst)
+inferExp g (Prim o) = do p <- unquantify (primOpType o) 
+                         return (Prim o, p, emptySubst)
 
 -- Application
-inferExp g (App e1 e2) = do (e1', t1, T)    <- inferExp g e1 
-                            (e2', t2, T')   <- inferExp (substGamma T g) e2
-                            alpha           <- fresh
-                            U               <- unify (substitute T' t1) (Arrow t2 alpha)
-                            return (App e1' e2', substitute U alpha, U<>T'<>T) 
+inferExp g (App e1 e2) = do (e1', t1, sub)    <- inferExp g e1 
+                            (e2', t2, sub')   <- inferExp (substGamma sub g) e2
+                            alpha             <- fresh
+                            u                 <- unify (substitute sub' t1) (Arrow t2 alpha)
+                            return (App e1' e2', substitute u alpha, u<>sub'<>sub) 
 
 -- If-Then-Else
-inferExp g (If e e1 e2) = do (e', t, T)     <- inferExp g e 
-                              U             <- unify T (Base Bool)
-                              (e1', t1, T')  <- inferExp (substGamma U<>T g) e1
-                              (e2', t2, T'') <- inferExp (substGamma T'<>U<>T g) e2
-                              U'            <- unify (substitute T'' t1) t2
-                              return (If e' e1' e2', substitute U' t2, U'<>T''<>T'<>U<>T) 
+inferExp g (If e e1 e2) = do  (e', t, sub)     <- inferExp g e 
+                              u                <- unify t (Base Bool)
+                              (e1', t1, sub')  <- inferExp (substGamma (u<>sub) g) e1
+                              (e2', t2, sub'') <- inferExp (substGamma (sub'<>u<>sub) g) e2
+                              u'               <- unify (substitute sub'' t1) t2
+                              return (If e' e1' e2', substitute u' t2, u'<>sub''<>sub'<>u<>sub) 
 
 -- Case
 -- -- Note: this is the only case you need to handle for case expressions
-inferExp g (Case e [Alt "Inl" [x] e1, Alt "Inr" [y] e2]) = do (e', t, T)     <- inferExp g e
-                                                              alphal         <- fresh 
-                                                              alphar         <- fresh
-                                                              (e1', tl, T')  <- inferExp (substGamma T (E.add g (x, Ty alphal))) e1
-                                                              (e2', tr, T'') <- inferExp (substGamme (T'<>T) (E.add g (y, Ty alphar))) e2
-                                                              U              <- unify (substitute (T''<>T'<>T) (Sum alphal alphar)) (substitute (T''<>T') t)
-                                                              U'             <- unify (substitute (U<>T'') t1) (substitute U tr)
-                                                              return ((Case e' [Alt "Inl" [x] e1', Alt "Inr" [y] e2']), substitute U' (substitute U tr), U'<>U<>T''<>T'<>T)
+inferExp g (Case e [Alt "Inl" [x] e1, Alt "Inr" [y] e2]) = do (e', t, sub)     <- inferExp g e
+                                                              alphal           <- fresh 
+                                                              alphar           <- fresh
+                                                              (e1', tl, sub')  <- inferExp (substGamma sub (E.add g (x, Ty alphal))) e1
+                                                              (e2', tr, sub'') <- inferExp (substGamma (sub'<>sub) (E.add g (y, Ty alphar))) e2
+                                                              u                <- unify (substitute (sub''<>sub'<>sub) (Sum alphal alphar)) (substitute (sub''<>sub') t)
+                                                              u'               <- unify (substitute (u<>sub'') tl) (substitute u tr)
+                                                              return ((Case e' [Alt "Inl" [x] e1', Alt "Inr" [y] e2']), substitute u' (substitute u tr), u'<>u<>sub''<>sub'<>sub)
 inferExp g (Case e _) = typeError MalformedAlternatives
 
 -- Recursive Functions    --Bind Id (Maybe QType) [Id] Exp
-inferExp g (Recfun (Bind f _ [x] e)) = do alpha1     <- fresh
-                                          alpha2     <- fresh
-                                          (e', t, T) <- inferExp (E.addAll g [(x, Ty alpha1), (f, Ty alpha2)) e 
-                                          U          <- unify (substitute T alpha2) (Arrow (substitute T alpha1) t)
-                                          return (Recfun (Bind f (Just (Ty (substitute U (Arrow (substitute T alpha1) t)))) [x] e'), substitute U (Arrow (substitute alpha1 t)), U<>T)
+inferExp g (Recfun (Bind f _ [x] e)) = do alpha1       <- fresh
+                                          alpha2       <- fresh
+                                          (e', t, sub) <- inferExp (E.addAll g [(x, Ty alpha1), (f, Ty alpha2)]) e 
+                                          u            <- unify (substitute sub alpha2) (Arrow (substitute sub alpha1) t)
+                                          return (Recfun (Bind f (Just (Ty (substitute u (Arrow (substitute sub alpha1) t)))) [x] e'), substitute u (Arrow (substitute sub alpha1) t), u<>sub)
 
 -- Let Bindings
-inferExp g (Let bs e1) = do (bs', g', T) <- inferBindings g bs 
-                            (e', t, T')  <- inferExp g' e 
-                            return (Let bs' e', t, T'<>T)
+inferExp g (Let bs e) = do  (bs', g', sub) <- inferBindings g bs 
+                            (e', t, sub')  <- inferExp g' e
+                            return (Let bs' e', t, sub'<>sub)
 
 -- Go through all let bindings
-inferBingings :: Gamma -> [Bind] -> TC ([Bind], Gamma, Subst) 
-inferBindings g [(Bind x types idents e)] = do (e', t, T)   <- inferExp g e
-                                               return ((Bind x (Just (generalise (substGamma T g) t)) idents e'), E.add (substGamma T g) (x, generalise (substGamma T g) t), T)
-inferBindings g [(Bind x types idents e):bs] = do (e', t, T)    <- inferExp g e 
-                                                  (bs', g', T') <- inferBindings (E.add (substGamma T g) (x, generalise (substGamma T g) t)) bs 
-                                                  return ((Bind x (Just (generalise g' t)) idents e') ++ bs', g', T'<>T)
+inferBindings :: Gamma -> [Bind] -> TC ([Bind], Gamma, Subst) 
+inferBindings g [(Bind x types idents e)] = do (e', t, sub)   <- inferExp g e
+                                               return ([(Bind x (Just (generalise (substGamma sub g) t)) idents e')], E.add (substGamma sub g) (x, generalise (substGamma sub g) t), sub)
+inferBindings g ((Bind x types idents e):bs) = do (e', t, sub)    <- inferExp g e 
+                                                  (bs', g', sub') <- inferBindings (E.add (substGamma sub g) (x, generalise (substGamma sub g) t)) bs 
+                                                  return ((Bind x (Just (generalise g' t)) idents e'):bs', g', sub'<>sub)
