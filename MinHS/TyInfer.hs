@@ -129,18 +129,15 @@ unify t (TypeVar v) | elem v (tv t) = typeError (OccursCheckFailed v t)
 unify t1 t2 = typeError (TypeMismatch t1 t2)
 
 generalise :: Gamma -> Type -> QType
-generalist g t = generalise' ((tv t) \\ (tvGamma g)) t
-generalise g t = error "implement me"
+generalise g t = generalise' ((tv t) \\ (tvGamma g)) t
 
-generalise' :: [Id] -> Type -> QType
+generalise' :: [Id] -> Type -> QType 
 generalise' [] t = Ty t
 generalise' (ident:idents) t = Forall ident (generalise' idents t)
 
 inferProgram :: Gamma -> Program -> TC (Program, Type, Subst)
 inferProgram env [(Bind main types args e)] = do  (e', t, sub) <- inferExp env e 
                                                   return ([allTypesBind (substQType sub) (Bind main (Just (generalise env t)) args e')], t, sub)
-inferProgram env bs = error "implement me! don't forget to run the result substitution on the"
-                            "entire expression using allTypes from Syntax.hs"
 
 inferExp :: Gamma -> Exp -> TC (Exp, Type, Subst)
 -- Constants and Variables
